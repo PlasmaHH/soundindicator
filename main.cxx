@@ -1,27 +1,147 @@
 
-#include "soundcard2c.h"
+#include "soundcard_indicator.h"
+
 #include "banner.h"
 
-#include "boost/units/systems/si.hpp"
-#include "boost/units/systems/si/prefixes.hpp"
-#include "boost/units/systems/si/io.hpp"
-#include "boost/units/io.hpp"
 
 #include "boost/algorithm/string.hpp"
 
 //#include "boost/units/scale.hpp"
 
 #include "boost/function.hpp"
-#include "boost/thread.hpp"
 #include "boost/program_options.hpp"
 
 #include <iostream>
 #include <iomanip>
 #include <fstream>
 #include <chrono>
+#include <stdexcept>
 #include <string>
 #include <memory>
 #include <vector>
+
+
+
+
+#include <errno.h>
+#include <fcntl.h> 
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <termios.h>
+#include <unistd.h>
+
+
+void set_mincount(int fd, int mcount)
+{
+    struct termios tty;
+
+    if (tcgetattr(fd, &tty) < 0) {
+        printf("Error tcgetattr: %s\n", strerror(errno));
+        return;
+    }
+
+    tty.c_cc[VMIN] = mcount ? 1 : 0;
+    tty.c_cc[VTIME] = 5;        /* half second timer */
+
+    if (tcsetattr(fd, TCSANOW, &tty) < 0)
+        printf("Error tcsetattr: %s\n", strerror(errno));
+}
+
+class serialport
+{
+private:
+	int fd = -1;
+
+	int set_attributes( int speed )
+	{
+		struct termios tty;
+
+		if (tcgetattr(fd, &tty) < 0) {
+			printf("Error from tcgetattr: %s\n", strerror(errno));
+			return -1;
+		}
+
+		cfsetospeed(&tty, (speed_t)speed);
+		cfsetispeed(&tty, (speed_t)speed);
+
+		tty.c_cflag |= (CLOCAL | CREAD);    /* ignore modem controls */
+		tty.c_cflag &= ~CSIZE;
+		tty.c_cflag |= CS8;         /* 8-bit characters */
+		tty.c_cflag &= ~PARENB;     /* no parity bit */
+		tty.c_cflag &= ~CSTOPB;     /* only need 1 stop bit */
+		tty.c_cflag &= ~CRTSCTS;    /* no hardware flowcontrol */
+
+		/* setup for non-canonical mode */
+		tty.c_iflag &= ~(IGNBRK | BRKINT | PARMRK | ISTRIP | INLCR | IGNCR | ICRNL | IXON);
+		tty.c_lflag &= ~(ECHO | ECHONL | ICANON | ISIG | IEXTEN);
+		tty.c_oflag &= ~OPOST;
+
+		/* fetch bytes as they become available */
+		tty.c_cc[VMIN] = 1;
+		tty.c_cc[VTIME] = 1;
+
+		if (tcsetattr(fd, TCSANOW, &tty) != 0) {
+			printf("Error from tcsetattr: %s\n", strerror(errno));
+			return -1;
+		}
+		return 0;
+	}
+
+public:
+	serialport( const std::string& device ) :
+		buffer(512)
+	{
+		fd = ::open(device.c_str(),O_RDWR | O_NOCTTY | O_SYNC );
+		if( fd < 0 )
+		{
+			throw std::runtime_error ("Failed to open serial port " + device );
+		}
+		set_attributes( B115200);
+	}
+		
+	~serialport()
+	{}
+
+	void write( std::string data )
+	{
+		if( data[data.size()-1] != '\n' )
+		{
+			data += "\n";
+		}
+		auto wlen = ::write( fd, data.data(), data.size() );
+		if( wlen != data.size() )
+		{
+			throw std::runtime_error("Could not write '" + data + "' to serial port" );
+		}
+	}
+
+	std::vector<char> buffer;
+
+	size_t buffer_level = 0;
+
+	std::string readline( )
+	{
+		if( buffer_level == buffer.size() )
+		{
+			buffer.resize(buffer.size() * 1.5 );
+		}
+		size_t rd = ::read( fd, &buffer[buffer_level], buffer.size() - buffer_level );
+		buffer_level += rd;
+
+		auto nlpos = std::find( buffer.begin(), buffer.begin() + buffer_level, '\n' );
+		if( nlpos == buffer.begin() + buffer_level )
+		{
+			return "";
+		}
+		std::string ret = { buffer.begin(), nlpos };
+		std::copy( nlpos+1,buffer.end(), buffer.begin() );
+		buffer_level -= ret.size();
+
+		return ret;
+	}
+};
+
 
 
 using namespace std::chrono_literals;
@@ -37,126 +157,7 @@ std::chrono::nanoseconds now( )
 	return 1ns * (ts.tv_sec * 1'000'000'000 + ts.tv_nsec);
 }
 
-class indicator
-{
-public:
-//	typedef quantity<length,uint64_t> length_type;
-	typedef decltype(boost::units::si::micro * boost::units::si::meter * 1ll) length_type;
 
-	struct reading
-	{
-		length_type length;
-		std::chrono::nanoseconds read_at;
-
-		void set( const reading& nrd )
-		{
-			reading tmp;
-			*(__int128_t*)&tmp= __sync_add_and_fetch( (__int128_t*)this, 0 );
-			while( !__sync_bool_compare_and_swap( (__int128_t*)this,*(const __int128_t*)&tmp, *(const __int128_t*)&nrd) );
-		}
-
-		reading get( ) const
-		{
-			reading ret;
-			*(__int128_t*)&ret = __sync_add_and_fetch( (__int128_t*)this, 0 );
-			return ret;
-		}
-
-	} __attribute__((aligned(16)));
-	static_assert(sizeof(reading) == 16, "Otherwise the xchhg thing doesn't work");
-private:
-protected:
-	std::string name;
-
-	length_type zero_offset;
-
-public:
-	indicator( const std::string& name_ = "<unnamed>" ) :
-		name(name_)
-	{
-	}
-
-	/**
-	 * Gives back the reading as shown on the device itself
-	 */
-	virtual reading raw_reading( ) const = 0;
-
-	/**
-	 * Shows the reading including any internal zeroing
-	 */
-	virtual reading get_reading( ) const
-	{
-		auto tmp = raw_reading();
-		return { tmp.length - zero_offset, tmp.read_at };
-	}
-
-	/**
-	 * Zeroes the indicator, gives back the last get_reading() before it
-	 */
-	virtual reading zero( )
-	{
-		auto ret = get_reading();
-		zero_offset = raw_reading().length;
-		return ret;
-	}
-
-};
-
-class soundcard_indicator :
-	public indicator
-{
-private:
-protected:
-	reading current_raw_reading;
-
-	sci::soundcard2c s2c;
-
-	std::unique_ptr<boost::thread> thread;
-
-	void run( )
-	{
-		s2c.run();
-	}
-public:
-	soundcard_indicator( ) :
-		s2c( [this](uint64_t value)
-				{
-					reading r;
-					int64_t len = value & 0xFFFFF;
-					if( value & 0x100000 )
-					{
-						len *= -1;
-					}
-//					std::cout << "len = " << len << "\n";
-					
-//					r.length = len * si::nano * si::meter;
-					auto rlen = len * boost::units::si::micro * boost::units::si::meter;
-//					rlen.foo();
-//					r.length.foo();
-
-					r.length = rlen;
-					r.read_at = now();
-					current_raw_reading.set(r);
-//					std::cout << "r.length = " << r.length << "\n";
-//					std::cout << "r.length = " << boost::units::engineering_prefix << r.length << "\n";
-					
-				},-1,96000,true )
-	{
-	}
-
-	virtual reading raw_reading( ) const
-	{
-		auto ret = current_raw_reading.get();
-		return ret;
-	}
-
-	void start( )
-	{
-		s2c.init();
-		thread.reset( new boost::thread( &soundcard_indicator::run, this ) );
-	}
-
-};
 
 static int verbosity = 0;
 std::pair<std::string,std::string> verbosity_parser( const std::string& s )
@@ -171,6 +172,24 @@ std::pair<std::string,std::string> verbosity_parser( const std::string& s )
 
 int main(int argc, const char *argv[])
 {
+	serialport sp("/dev/ttyACM0");
+	sp.write("G1 Z2 F0");
+	sp.write("M114");
+	for (size_t i = 0; i < 100; ++i)
+	{
+		std::string line = sp.readline();
+		std::cout << "line = " << line << "\n";
+		if( line.empty() ) continue;
+		if( line == "ok" )
+		{
+			sp.write("M114");
+		}
+		else
+		{
+			break;
+		}
+	}
+	return 4;
 //	std::cout << "\033[2J";
 //	banner banx {120};
 //	banx.write("-0.1234589um");
