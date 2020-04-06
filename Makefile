@@ -14,7 +14,7 @@ LANG=C
 #LFLAGS=$(firstword $(wildcard $(HOME)/svn/REPMDPS/trunk/tests/libs_mdps/externals/vwd/bin_Linux*/vwd/libvwd.a)) -lboost_system
 LFLAGS=
 
-main.o: main.cxx soundcard2c.h  soundcard_indicator.h indicator.h
+main.o: main.cxx soundcard2c.h  soundcard_indicator.h indicator.h clocktime.h
 
 %.s: %.cxx Makefile
 	$(CXX) -Wsign-promo -mcx16 -Wall -Wextra -g3 -ggdb3 -std=gnu++2a -pthread -I. $(CXXFLAGS) $< $(BOOST) -lpthread -lrt -ldl $(LFLAGS) -o $@ -S

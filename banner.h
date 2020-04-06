@@ -2,6 +2,8 @@
 #ifndef __SCI_BANNER_H_
 #define __SCI_BANNER_H_
 
+#include "stringutil.h"
+
 #include <string>
 #include <vector>
 #include <ostream>
@@ -315,26 +317,6 @@ std::string char_space = R"(
           
 )";
 
-template<class V>
-void split( V& v, const std::string& s, const std::string& d, bool collapse = false )
-{
-	if( s.empty() )
-	{
-		return;
-	}
-	size_t oldpos = 0;
-	size_t pos = 0;
-	do
-	{
-		pos = s.find(d,oldpos);
-		if( !collapse || (pos-oldpos) > 0 )
-		{
-			std::string part = s.substr(oldpos,pos-oldpos);
-			v.insert(v.end(),part);
-		}
-		oldpos = pos + d.size();
-	} while ( pos != std::string::npos );
-}
 
 class banner
 {

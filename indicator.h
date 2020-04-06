@@ -10,6 +10,7 @@
 
 #include <chrono>
 #include <string>
+#include <iostream>
 
 class indicator
 {
@@ -61,7 +62,45 @@ public:
 	virtual reading get_reading( ) const
 	{
 		auto tmp = raw_reading();
+//		std::cout << "tmp.length = " << tmp.length << "\n";
+		
 		return { tmp.length - zero_offset, tmp.read_at };
+	}
+
+	virtual reading get_next_reading( ) const
+	{
+		auto current = get_reading();
+		auto ret = current;
+		do
+		{
+			usleep(100);
+			ret = get_reading();
+		} while( current.read_at == ret.read_at );
+		return ret;
+	}
+
+	/**
+	 * Sometimes the timing is a bit off, get a reading that is the same for N consecutive runs
+	 */
+	virtual reading get_stable_reading( size_t n = 2 ) const
+	{
+		auto first = get_reading();
+		auto last = first;
+		size_t sames = 0;
+		do
+		{
+			last = get_next_reading();
+			if( last.length == first.length )
+			{
+				++sames;
+			}
+			else
+			{
+				sames = 0;
+				first = last;
+			}
+		} while( sames < n );
+		return first;
 	}
 
 	/**

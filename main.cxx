@@ -101,7 +101,12 @@ public:
 	}
 		
 	~serialport()
-	{}
+	{
+		if( fd >= 0 )
+		{
+			::close(fd);
+		}
+	}
 
 	void write( std::string data )
 	{
@@ -110,7 +115,7 @@ public:
 			data += "\n";
 		}
 		auto wlen = ::write( fd, data.data(), data.size() );
-		if( wlen != data.size() )
+		if( size_t(wlen) != data.size() )
 		{
 			throw std::runtime_error("Could not write '" + data + "' to serial port" );
 		}
@@ -126,10 +131,17 @@ public:
 		{
 			buffer.resize(buffer.size() * 1.5 );
 		}
-		size_t rd = ::read( fd, &buffer[buffer_level], buffer.size() - buffer_level );
-		buffer_level += rd;
-
 		auto nlpos = std::find( buffer.begin(), buffer.begin() + buffer_level, '\n' );
+		if( nlpos == buffer.begin() + buffer_level )
+		{
+			size_t rd = ::read( fd, &buffer[buffer_level], buffer.size() - buffer_level );
+			buffer_level += rd;
+		}
+
+//		std::cout << "After ::read() buffer level " << buffer_level << "\n";
+//		memdump(std::cout,buffer.data(), buffer_level );
+
+		nlpos = std::find( buffer.begin(), buffer.begin() + buffer_level, '\n' );
 		if( nlpos == buffer.begin() + buffer_level )
 		{
 			return "";
@@ -137,25 +149,113 @@ public:
 		std::string ret = { buffer.begin(), nlpos };
 		std::copy( nlpos+1,buffer.end(), buffer.begin() );
 		buffer_level -= ret.size();
+		--buffer_level; // We also cut off the \n
+
+//		std::cout << "buffer_level = " << buffer_level << "\n";
+		
+//		std::cout << "readline():\n";
+//		memdump(std::cout,ret.data(),ret.size());
+//		std::cout << "Remaining in buffer (" << buffer_level << ")\n";
+//		memdump(std::cout,buffer.data(), buffer_level );
+
+		return ret;
+	}
+
+	std::string readline_wait( )
+	{
+		std::string ret;
+		do
+		{
+			ret = readline();
+		} while( ret.empty() );
 
 		return ret;
 	}
 };
 
-
-
-using namespace std::chrono_literals;
-
-//using namespace boost::units;
-//using namespace boost::units::si;
-
-std::chrono::nanoseconds now( )
+class printer
 {
-	struct timespec ts;
-	clock_gettime( CLOCK_REALTIME, &ts );
+private:
+	serialport sp;
 
-	return 1ns * (ts.tv_sec * 1'000'000'000 + ts.tv_nsec);
-}
+	std::map<std::string,float> steps_per_mm;
+
+	void init( )
+	{
+		sp.write("M92");
+		std::string line = sp.readline_wait();
+		auto okline = sp.readline_wait();
+		std::vector<std::string> vec;
+		split( vec, line, " ", true );
+		for( auto elem : vec )
+		{
+			if( elem == "M92" ) continue;
+			if( elem == "echo:" ) continue;
+			std::string axis ( 1, elem[0] );
+			elem.erase(elem.begin());
+			auto smm = std::stof( elem );
+			steps_per_mm[axis] = smm;
+			std::cout << axis << " : " << smm << " steps/mm\n";
+		}
+	}
+
+public:
+	printer ( const std::string& dev ) :
+		sp(dev)
+	{
+		init();
+	}
+
+	/**
+	 * Goes to and waits...
+	 */
+	void go_to( const std::string& axis, float position_mm, size_t speed = 100 )
+	{
+		sp.write("G1 " + axis + std::to_string(position_mm) + " F" + std::to_string(speed) );
+		std::string line = sp.readline_wait(); // The "ok" 
+
+		float expected_steps = position_mm * steps_per_mm[axis];
+
+		std::string exstr = axis + ":" + std::to_string(expected_steps);
+		size_t repeats = 0;
+		std::string lastline;
+
+//		std::cout << "Expecting to find '" << exstr << "' somewhere in the answer\n";
+
+		int cnt = 0;
+		std::string position_line;
+		std::string target_line;
+		do
+		{
+			++cnt;
+			sp.write("M114");
+
+			position_line = sp.readline_wait();
+//			std::cout << "\rposition_line = " << position_line << "     " << std::flush;
+			target_line = sp.readline_wait();
+//			std::cout << "target_line = " << target_line << "\n";
+			auto okline = sp.readline_wait();
+//			std::cout << "okline = " << okline << "\n";
+			
+			
+			
+			
+			if( lastline == position_line )
+			{
+				++repeats;
+			}
+			else
+			{
+				repeats = 0;
+			}
+			lastline = position_line;
+		}while( position_line.find(target_line) == std::string::npos || repeats > 2 );
+//		std::cout << "\n";
+//		std::cout << "repeats = " << repeats << "\n";
+	}
+};
+
+
 
 
 
@@ -170,33 +270,125 @@ std::pair<std::string,std::string> verbosity_parser( const std::string& s )
 	return { "", "" };
 }
 
+struct result
+{
+	float g_value;
+	float measurement_sum = 0;
+	std::vector<float> measured_values;
+};
+
+int plot_axis( const std::string& axis, float start, float end, float steps, bool bidirectional, size_t runs, float prepos, float speed, size_t stable )
+{
+	if( axis.size() != 1 )
+	{
+		throw std::runtime_error("Axis is expected to be a single character, not '" + axis + "'\n");
+	}
+	std::cout << "Inidializing indicator...\n";
+	soundcard_indicator zsi;
+	zsi.start();
+	std::cout << "Connecting to printer...\n";
+	printer pr("/dev/ttyACM0");
+
+	std::vector<result> readings;
+	readings.resize( size_t(std::abs((end-start) / steps)+0.5)+1 );
+
+	std::cout << "readings.size() = " << readings.size() << "\n";
+	
+	for (size_t run = 0; run < runs; ++run)
+	{
+		if( runs > 1 )
+		{
+			std::cout << "Run " << run+1 << "/" << runs << "\n";
+		}
+		std::cout << "Getting printer into start position\n";
+		if( prepos >= 0 )
+		{
+			pr.go_to( axis, prepos, 100 );
+		}
+		pr.go_to(axis,start, 100 );
+		auto r = zsi.get_stable_reading();
+
+		zsi.zero();
+
+		steps = std::abs(steps);
+		if( start > end )
+		{
+			steps = -steps;
+		}
+
+		size_t ridx = 0;
+
+		std::cout << "Driving measurement, please do not disturb the printer\n";
+		
+		for( float zp = start; zp <= end; zp += steps )
+		{
+			std::cout << "\rDriving to : " <<  zp*1000 << "   " << std::flush;
+			pr.go_to( axis, zp, speed );
+
+			if( stable )
+			{
+				r = zsi.get_stable_reading(stable);
+			}
+			else
+			{
+				r = zsi.get_next_reading();
+			}
+//			std::cout << "ridx = " << ridx << " ";
+			
+			std::cout << "measured " << r.length;
+			std::cout << ", deviation " << (zp*1000-r.length.value()) << "µm        " << std::flush;
+			readings[ridx].g_value = zp;
+			readings[ridx].measurement_sum += r.length.value();
+			readings[ridx].measured_values.push_back( r.length.value() );
+			++ridx;
+		}
+		std::cout << "\n";
+	}
+	std::cout << "\n";
+
+	std::ofstream aout { "axis_" + axis + ".dat" };
+
+	aout << "# g_value avg ";
+	for (size_t i = 0; i < runs; ++i)
+	{
+		aout << " run" << i;
+	}
+	aout << "\n";
+
+	for( auto& res : readings )
+	{
+		auto gv = res.g_value * 1000;
+		aout << gv << " " << res.measurement_sum/runs << " ";
+		for( auto& mv : res.measured_values )
+		{
+			aout << mv << " ";
+		}
+
+		aout << (gv-(res.measurement_sum/runs)) << " ";
+		for( auto& mv : res.measured_values )
+		{
+			aout << (gv-mv) << " ";
+		}
+		aout << "\n";
+	}
+
+
+	return 4;
+}
+
 int main(int argc, const char *argv[])
 {
-	serialport sp("/dev/ttyACM0");
-	sp.write("G1 Z2 F0");
-	sp.write("M114");
-	for (size_t i = 0; i < 100; ++i)
-	{
-		std::string line = sp.readline();
-		std::cout << "line = " << line << "\n";
-		if( line.empty() ) continue;
-		if( line == "ok" )
-		{
-			sp.write("M114");
-		}
-		else
-		{
-			break;
-		}
-	}
-	return 4;
-//	std::cout << "\033[2J";
-//	banner banx {120};
-//	banx.write("-0.1234589um");
-//	banx.flush();
-//
-//	return 5;
 	bool banner_mode = false;
+	std::string mode;
+	size_t average = 0;
+	std::string axis;
+	float start = 0;
+	float end = 0;
+	float steps = 0;
+	bool bidir = false;
+	float preposition = -1;
+	float speed = 0;
+	size_t stable = 0;
 
 	boost::program_options::options_description desc("Valid options");
 
@@ -206,6 +398,16 @@ int main(int argc, const char *argv[])
 
 	("verbose,v",boost::program_options::value<std::vector<std::string> >(), "Increase the initial logging level (may be overridden by a config file)")
 	("banner,b",boost::program_options::value<bool>(&banner_mode)->implicit_value(true), "Indicator output in banner mode")
+	("mode,m",boost::program_options::value<std::string>(&mode), "Operating mode: plot" )
+	("average,a",boost::program_options::value<size_t>(&average)->default_value(1), "Average over that many runs in plot mode")
+	("axis,A", boost::program_options::value<std::string>(&axis), "The axis to use in plot mode")
+	("start,s", boost::program_options::value<float>(&start)->default_value(0), "Start movement at this point (mm)" )
+	("end,e", boost::program_options::value<float>(&end)->default_value(2), "End movement at this point (mm)" )
+	("steps,S", boost::program_options::value<float>(&steps)->default_value(0.01), "The steps to be done per measurement (mm), the absolute value will be used in the proper direction")
+	("bidirectional,B", boost::program_options::value<bool>(&bidir)->default_value(false)->implicit_value(true), "Do the movement in both directions")
+	("preposition,p",boost::program_options::value<float>(&preposition), "Before driving to the start, drive to this position (simulates auto homing and hop movements)")
+	("speed,F",boost::program_options::value<float>(&speed)->default_value(10),"The speed to move with, given to the F parameter of G1")
+	("stable,r",boost::program_options::value<size_t>(&stable)->default_value(0), "For each reading wait to stabilize for that many readings first. Makes measurements slower, can prevent them totally if you have a too high value")
 	;
 
 
@@ -226,13 +428,22 @@ int main(int argc, const char *argv[])
 	{
 	}
 
+	if( mode == "plot" )
+	{
+		return plot_axis( axis, start, end, steps, bidir, average, preposition, speed, stable );
+	}
+	else if( !mode.empty() )
+	{
+		std::cout << "Unknown operation mode '" << mode << "'\n";
+		return 5;
+	}
 
 
 	soundcard_indicator si;
 	si.start();
 
 	std::chrono::nanoseconds last = 0s;
-	std::chrono::nanoseconds start = now();
+	std::chrono::nanoseconds started = now();
 
 	std::cout << "\033[2J";
 
@@ -266,7 +477,7 @@ int main(int argc, const char *argv[])
 			{
 				std::cout << "\033[0;0H";
 				std::cout << "\r";
-				std::cout << (when-start).count() << "ns ";
+				std::cout << (when-started).count() << "ns ";
 				std::cout << len;
 				std::cout << "               ";
 				std::cout << std::flush;

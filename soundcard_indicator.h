@@ -3,6 +3,7 @@
 
 #include "indicator.h"
 #include "soundcard2c.h"
+#include "clocktime.h"
 
 #include "boost/thread.hpp"
 
@@ -40,6 +41,8 @@ public:
 //					rlen.foo();
 //					r.length.foo();
 
+//					std::cout << "rlen = " << rlen << "\n";
+					
 					r.length = rlen;
 					r.read_at = now();
 					current_raw_reading.set(r);

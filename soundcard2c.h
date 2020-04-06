@@ -99,7 +99,7 @@ private:
 	}
 
 
-	line_state calc_state( line_state old_state, float old_, float new_ )
+	line_state calc_state( line_state old_state, float /*old_*/, float new_ )
 	{
 	//	if( std::abs(old_) < 0.01 && std::abs(new_) < 0.01 )
 	//	{
@@ -397,7 +397,7 @@ public:
 			defin = Pa_GetDefaultInputDevice();
 		}
 
-		for (size_t i = 0; i < numdev; ++i)
+		for (int i = 0; i < numdev; ++i)
 		{
 			auto devinfo = Pa_GetDeviceInfo( i );
 			if( i == defin )
