@@ -277,7 +277,7 @@ struct result
 	std::vector<float> measured_values;
 };
 
-int plot_axis( const std::string& axis, float start, float end, float steps, bool bidirectional, size_t runs, float prepos, float speed, size_t stable )
+int plot_axis( const std::string& device, const std::string& axis, float start, float end, float steps, bool bidirectional, size_t runs, float prepos, float speed, size_t stable )
 {
 	if( axis.size() != 1 )
 	{
@@ -287,10 +287,10 @@ int plot_axis( const std::string& axis, float start, float end, float steps, boo
 	soundcard_indicator zsi;
 	zsi.start();
 	std::cout << "Connecting to printer...\n";
-	printer pr("/dev/ttyACM0");
+	printer pr(device);
 
 	std::vector<result> readings;
-	readings.resize( size_t(std::abs((end-start) / steps)+0.5)+1 );
+	readings.resize( size_t(std::abs((end-start) / steps)+0.5) );
 
 	std::cout << "readings.size() = " << readings.size() << "\n";
 	
@@ -389,6 +389,7 @@ int main(int argc, const char *argv[])
 	float preposition = -1;
 	float speed = 0;
 	size_t stable = 0;
+	std::string device;
 
 	boost::program_options::options_description desc("Valid options");
 
@@ -408,6 +409,7 @@ int main(int argc, const char *argv[])
 	("preposition,p",boost::program_options::value<float>(&preposition), "Before driving to the start, drive to this position (simulates auto homing and hop movements)")
 	("speed,F",boost::program_options::value<float>(&speed)->default_value(10),"The speed to move with, given to the F parameter of G1")
 	("stable,r",boost::program_options::value<size_t>(&stable)->default_value(0), "For each reading wait to stabilize for that many readings first. Makes measurements slower, can prevent them totally if you have a too high value")
+	("device,d",boost::program_options::value<std::string>(&device)->default_value("/dev/ttyACM0"), "The serial port device the printer is attached to")
 	;
 
 
@@ -430,7 +432,7 @@ int main(int argc, const char *argv[])
 
 	if( mode == "plot" )
 	{
-		return plot_axis( axis, start, end, steps, bidir, average, preposition, speed, stable );
+		return plot_axis( device, axis, start, end, steps, bidir, average, preposition, speed, stable );
 	}
 	else if( !mode.empty() )
 	{
