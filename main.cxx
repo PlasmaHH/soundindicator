@@ -179,7 +179,7 @@ class printer
 private:
 	serialport sp;
 
-	std::map<std::string,float> steps_per_mm;
+	std::map<std::string,double> steps_per_mm;
 
 	void init( )
 	{
@@ -232,12 +232,12 @@ public:
 	/**
 	 * Goes to and waits...
 	 */
-	void go_to( const std::string& axis, float position_mm, size_t speed = 100 )
+	void go_to( const std::string& axis, double position_mm, size_t speed = 100 )
 	{
 		sp.write("G1 " + axis + std::to_string(position_mm) + " F" + std::to_string(speed) );
 		std::string line = sp.readline_wait(); // The "ok" 
 
-		float expected_steps = position_mm * steps_per_mm[axis];
+		double expected_steps = position_mm * steps_per_mm[axis];
 
 		std::string exstr = axis + ":" + std::to_string(expected_steps);
 		size_t repeats = 0;
@@ -295,12 +295,43 @@ std::pair<std::string,std::string> verbosity_parser( const std::string& s )
 
 struct result
 {
-	float g_value;
-	float measurement_sum = 0;
-	std::vector<float> measured_values;
+	double g_value;
+	double measurement_sum = 0;
+	std::vector<double> measured_values;
 };
 
-int plot_axis( const std::string& device, const std::string& gcode, const std::string& axis, float start, float end, float steps, bool bidirectional, size_t runs, float prepos, float speed, size_t stable )
+void output_axis( const std::string& axis, size_t runs, const std::vector<result>& readings )
+{
+	std::ofstream aout { "axis_" + axis + ".dat" };
+
+	aout << "# g_value avg ";
+	for (size_t i = 0; i < runs; ++i)
+	{
+		aout << " run" << i;
+	}
+	aout << "\n";
+
+	for( auto& res : readings )
+	{
+		auto gv = res.g_value * 1000;
+		aout << gv << " " << res.measurement_sum/runs << " ";
+		for( auto& mv : res.measured_values )
+		{
+			aout << mv << " ";
+		}
+
+		aout << ((res.measurement_sum/runs)-gv) << " ";
+		for( auto& mv : res.measured_values )
+		{
+			aout << (mv-gv) << " ";
+		}
+		aout << "\n";
+	}
+
+
+}
+
+int plot_axis( const std::string& device, const std::string& gcode, const std::string& axis, double start, double end, double steps, bool bidirectional, size_t runs, double prepos, double speed, size_t stable )
 {
 	if( axis.size() != 1 )
 	{
@@ -381,34 +412,11 @@ int plot_axis( const std::string& device, const std::string& gcode, const std::s
 			++ridx;
 		}
 		std::cout << "\n";
+		output_axis( axis, run+1, readings );
 	}
 	std::cout << "\n";
 
-	std::ofstream aout { "axis_" + axis + ".dat" };
-
-	aout << "# g_value avg ";
-	for (size_t i = 0; i < runs; ++i)
-	{
-		aout << " run" << i;
-	}
-	aout << "\n";
-
-	for( auto& res : readings )
-	{
-		auto gv = res.g_value * 1000;
-		aout << gv << " " << res.measurement_sum/runs << " ";
-		for( auto& mv : res.measured_values )
-		{
-			aout << mv << " ";
-		}
-
-		aout << ((res.measurement_sum/runs)-gv) << " ";
-		for( auto& mv : res.measured_values )
-		{
-			aout << (mv-gv) << " ";
-		}
-		aout << "\n";
-	}
+	output_axis( axis, runs, readings );
 
 
 	return 0;
@@ -420,12 +428,12 @@ int main(int argc, const char *argv[])
 	std::string mode;
 	size_t average = 0;
 	std::string axis;
-	float start = 0;
-	float end = 0;
-	float steps = 0;
+	double start = 0;
+	double end = 0;
+	double steps = 0;
 	bool bidir = false;
-	float preposition = -1;
-	float speed = 0;
+	double preposition = -1;
+	double speed = 0;
 	size_t stable = 0;
 	std::string device;
 	std::string gcode;
@@ -441,12 +449,12 @@ int main(int argc, const char *argv[])
 	("mode,m",boost::program_options::value<std::string>(&mode), "Operating mode: plot" )
 	("average,a",boost::program_options::value<size_t>(&average)->default_value(1), "Average over that many runs in plot mode")
 	("axis,A", boost::program_options::value<std::string>(&axis), "The axis to use in plot mode")
-	("start,s", boost::program_options::value<float>(&start)->default_value(0), "Start movement at this point (mm)" )
-	("end,e", boost::program_options::value<float>(&end)->default_value(2), "End movement at this point (mm)" )
-	("steps,S", boost::program_options::value<float>(&steps)->default_value(0.01), "The steps to be done per measurement (mm), the absolute value will be used in the proper direction")
+	("start,s", boost::program_options::value<double>(&start)->default_value(0), "Start movement at this point (mm)" )
+	("end,e", boost::program_options::value<double>(&end)->default_value(2), "End movement at this point (mm)" )
+	("steps,S", boost::program_options::value<double>(&steps)->default_value(0.01), "The steps to be done per measurement (mm), the absolute value will be used in the proper direction")
 	("bidirectional,B", boost::program_options::value<bool>(&bidir)->default_value(false)->implicit_value(true), "Do the movement in both directions")
-	("preposition,p",boost::program_options::value<float>(&preposition), "Before driving to the start, drive to this position (simulates auto homing and hop movements)")
-	("speed,F",boost::program_options::value<float>(&speed)->default_value(10),"The speed to move with, given to the F parameter of G1")
+	("preposition,p",boost::program_options::value<double>(&preposition), "Before driving to the start, drive to this position (simulates auto homing and hop movements)")
+	("speed,F",boost::program_options::value<double>(&speed)->default_value(10),"The speed to move with, given to the F parameter of G1")
 	("stable,r",boost::program_options::value<size_t>(&stable)->default_value(0), "For each reading wait to stabilize for that many readings first. Makes measurements slower, can prevent them totally if you have a too high value")
 	("device,d",boost::program_options::value<std::string>(&device)->default_value("/dev/ttyACM0"), "The serial port device the printer is attached to")
 	("gcode,g",boost::program_options::value<std::string>(&gcode), "Some gcode to execute before everyhting else" )
