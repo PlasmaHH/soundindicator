@@ -8,3 +8,10 @@ This project is not intended to be maintained for public use, it may serve as an
 Pull requests are welcome, feature requests and bug reports will only be worked on when they annoy me enough.
 
 ---
+
+
+With it (and gnuplot) you can easily create a graph like this, which shows the error of an ender 3 pro Z axis movement:
+
+
+![](img/fine_20mm_flat.png)
+

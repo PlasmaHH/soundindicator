@@ -85,6 +85,7 @@ private:
 			printf("Error from tcsetattr: %s\n", strerror(errno));
 			return -1;
 		}
+		set_mincount( fd, 0 );
 		return 0;
 	}
 
@@ -206,6 +207,28 @@ public:
 		init();
 	}
 
+	std::string execute( const std::string& gcode )
+	{
+		std::string ret;
+		sp.write(gcode);
+		do
+		{
+			ret += sp.readline();
+//			std::cout << "ret = " << ret << "\n";
+			
+		} while(ret.empty());
+
+		std::string more;
+		do
+		{
+			more = sp.readline();
+			ret += more;
+//			std::cout << "2ret = " << ret << "\n";
+		} while( !more.empty() );
+
+		return ret;
+	}
+
 	/**
 	 * Goes to and waits...
 	 */
@@ -277,20 +300,35 @@ struct result
 	std::vector<float> measured_values;
 };
 
-int plot_axis( const std::string& device, const std::string& axis, float start, float end, float steps, bool bidirectional, size_t runs, float prepos, float speed, size_t stable )
+int plot_axis( const std::string& device, const std::string& gcode, const std::string& axis, float start, float end, float steps, bool bidirectional, size_t runs, float prepos, float speed, size_t stable )
 {
 	if( axis.size() != 1 )
 	{
 		throw std::runtime_error("Axis is expected to be a single character, not '" + axis + "'\n");
 	}
-	std::cout << "Inidializing indicator...\n";
+	std::cout << "Initializing indicator...\n";
 	soundcard_indicator zsi;
 	zsi.start();
 	std::cout << "Connecting to printer...\n";
 	printer pr(device);
 
+	if( !gcode.empty() )
+	{
+		std::cout << "Executing priming gcode '" << gcode << "'\n";
+		auto exres = pr.execute(gcode);
+		std::cout << "Printer responded with '" << exres << "'\n";
+	}
+
 	std::vector<result> readings;
-	readings.resize( size_t(std::abs((end-start) / steps)+0.5) );
+
+	size_t cnt = 0;
+	for( double zp = start; zp <= end; zp += steps )
+	{
+		++cnt;
+	}
+
+//	readings.resize( size_t(std::abs((end-start) / steps)+0.5) );
+	readings.resize( cnt ); // Too late to do the proper math, let me do it tomorrow
 
 	std::cout << "readings.size() = " << readings.size() << "\n";
 	
@@ -320,7 +358,7 @@ int plot_axis( const std::string& device, const std::string& axis, float start, 
 
 		std::cout << "Driving measurement, please do not disturb the printer\n";
 		
-		for( float zp = start; zp <= end; zp += steps )
+		for( double zp = start; zp <= end; zp += steps )
 		{
 			std::cout << "\rDriving to : " <<  zp*1000 << "   " << std::flush;
 			pr.go_to( axis, zp, speed );
@@ -336,7 +374,7 @@ int plot_axis( const std::string& device, const std::string& axis, float start, 
 //			std::cout << "ridx = " << ridx << " ";
 			
 			std::cout << "measured " << r.length;
-			std::cout << ", deviation " << (zp*1000-r.length.value()) << "µm        " << std::flush;
+			std::cout << ", deviation " << (r.length.value() - zp*1000) << "µm        " << std::flush;
 			readings[ridx].g_value = zp;
 			readings[ridx].measurement_sum += r.length.value();
 			readings[ridx].measured_values.push_back( r.length.value() );
@@ -364,16 +402,16 @@ int plot_axis( const std::string& device, const std::string& axis, float start, 
 			aout << mv << " ";
 		}
 
-		aout << (gv-(res.measurement_sum/runs)) << " ";
+		aout << ((res.measurement_sum/runs)-gv) << " ";
 		for( auto& mv : res.measured_values )
 		{
-			aout << (gv-mv) << " ";
+			aout << (mv-gv) << " ";
 		}
 		aout << "\n";
 	}
 
 
-	return 4;
+	return 0;
 }
 
 int main(int argc, const char *argv[])
@@ -390,6 +428,7 @@ int main(int argc, const char *argv[])
 	float speed = 0;
 	size_t stable = 0;
 	std::string device;
+	std::string gcode;
 
 	boost::program_options::options_description desc("Valid options");
 
@@ -410,6 +449,7 @@ int main(int argc, const char *argv[])
 	("speed,F",boost::program_options::value<float>(&speed)->default_value(10),"The speed to move with, given to the F parameter of G1")
 	("stable,r",boost::program_options::value<size_t>(&stable)->default_value(0), "For each reading wait to stabilize for that many readings first. Makes measurements slower, can prevent them totally if you have a too high value")
 	("device,d",boost::program_options::value<std::string>(&device)->default_value("/dev/ttyACM0"), "The serial port device the printer is attached to")
+	("gcode,g",boost::program_options::value<std::string>(&gcode), "Some gcode to execute before everyhting else" )
 	;
 
 
@@ -432,7 +472,7 @@ int main(int argc, const char *argv[])
 
 	if( mode == "plot" )
 	{
-		return plot_axis( device, axis, start, end, steps, bidir, average, preposition, speed, stable );
+		return plot_axis( device, gcode, axis, start, end, steps, bidir, average, preposition, speed, stable );
 	}
 	else if( !mode.empty() )
 	{
