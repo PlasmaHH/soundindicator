@@ -25,7 +25,7 @@ protected:
 		s2c.run();
 	}
 public:
-	soundcard_indicator( ) :
+	soundcard_indicator( bool swap_cd = false ) :
 		s2c( [this](uint64_t value)
 				{
 					reading r;
@@ -49,7 +49,7 @@ public:
 //					std::cout << "r.length = " << r.length << "\n";
 //					std::cout << "r.length = " << boost::units::engineering_prefix << r.length << "\n";
 					
-				},-1,96000,true )
+				},-1,96000,swap_cd)
 	{
 	}
 

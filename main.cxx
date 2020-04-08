@@ -331,14 +331,14 @@ void output_axis( const std::string& axis, size_t runs, const std::vector<result
 
 }
 
-int plot_axis( const std::string& device, const std::string& gcode, const std::string& axis, double start, double end, double steps, bool bidirectional, size_t runs, double prepos, double speed, size_t stable )
+int plot_axis( const std::string& device, bool swap_cd, const std::string& gcode, const std::string& axis, double start, double end, double steps, bool bidirectional, size_t runs, double prepos, double speed, size_t stable )
 {
 	if( axis.size() != 1 )
 	{
 		throw std::runtime_error("Axis is expected to be a single character, not '" + axis + "'\n");
 	}
 	std::cout << "Initializing indicator...\n";
-	soundcard_indicator zsi;
+	soundcard_indicator zsi{swap_cd};
 	zsi.start();
 	std::cout << "Connecting to printer...\n";
 	printer pr(device);
@@ -422,6 +422,15 @@ int plot_axis( const std::string& device, const std::string& gcode, const std::s
 	return 0;
 }
 
+int calibrate_volume( bool swap_cd )
+{
+	sci::soundcard2c si {[](uint64_t) {}, -1, 96000, swap_cd };
+	si.init(true); // Volume mode
+
+	si.run();
+	return 0;
+}
+
 int main(int argc, const char *argv[])
 {
 	bool banner_mode = false;
@@ -437,6 +446,7 @@ int main(int argc, const char *argv[])
 	size_t stable = 0;
 	std::string device;
 	std::string gcode;
+	bool swap_cd = false;
 
 	boost::program_options::options_description desc("Valid options");
 
@@ -446,7 +456,7 @@ int main(int argc, const char *argv[])
 
 	("verbose,v",boost::program_options::value<std::vector<std::string> >(), "Increase the initial logging level (may be overridden by a config file)")
 	("banner,b",boost::program_options::value<bool>(&banner_mode)->implicit_value(true), "Indicator output in banner mode")
-	("mode,m",boost::program_options::value<std::string>(&mode), "Operating mode: plot" )
+	("mode,m",boost::program_options::value<std::string>(&mode), "Operating mode: plot or volume" )
 	("average,a",boost::program_options::value<size_t>(&average)->default_value(1), "Average over that many runs in plot mode")
 	("axis,A", boost::program_options::value<std::string>(&axis), "The axis to use in plot mode")
 	("start,s", boost::program_options::value<double>(&start)->default_value(0), "Start movement at this point (mm)" )
@@ -458,6 +468,7 @@ int main(int argc, const char *argv[])
 	("stable,r",boost::program_options::value<size_t>(&stable)->default_value(0), "For each reading wait to stabilize for that many readings first. Makes measurements slower, can prevent them totally if you have a too high value")
 	("device,d",boost::program_options::value<std::string>(&device)->default_value("/dev/ttyACM0"), "The serial port device the printer is attached to")
 	("gcode,g",boost::program_options::value<std::string>(&gcode), "Some gcode to execute before everyhting else" )
+	("swap_cd,d", boost::program_options::value<bool>(&swap_cd)->default_value(false),"Swap data/clock signal on the sound card")
 	;
 
 
@@ -480,7 +491,11 @@ int main(int argc, const char *argv[])
 
 	if( mode == "plot" )
 	{
-		return plot_axis( device, gcode, axis, start, end, steps, bidir, average, preposition, speed, stable );
+		return plot_axis( device, swap_cd, gcode, axis, start, end, steps, bidir, average, preposition, speed, stable );
+	}
+	else if( mode == "volume" )
+	{
+		return calibrate_volume(swap_cd );
 	}
 	else if( !mode.empty() )
 	{

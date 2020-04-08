@@ -1,9 +1,7 @@
 CXX=g++
 
 
-ifneq "$(CODEPAD_TARGET_EXE)" ""
-all: $(CODEPAD_TARGET_EXE)
-endif
+all: readdial
 
 LANG=C
 #BOOST=-lboost_thread

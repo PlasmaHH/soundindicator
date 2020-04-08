@@ -22,7 +22,7 @@ Valid options:
   -v [ --verbose ] arg                  Increase the initial logging level (may
                                         be overridden by a config file)
   -b [ --banner ] [=arg(=1)]            Indicator output in banner mode
-  -m [ --mode ] arg                     Operating mode: plot
+  -m [ --mode ] arg                     Operating mode: plot or volume
   -a [ --average ] arg (=1)             Average over that many runs in plot 
                                         mode
   -A [ --axis ] arg                     The axis to use in plot mode
@@ -46,5 +46,16 @@ Valid options:
                                         attached to
   -g [ --gcode ] arg                    Some gcode to execute before everyhting
                                         else
+  -d [ --swap_cd ] arg (=0)             Swap data/clock signal on the sound 
+                                        card
 
 ```
+
+### Compiling
+You need a recent boost and proper portaudio installation, check error messages for yourself ;)
+
+### Calibrating Volume
+
+You need to run it in mode volume to calibrate. Start with volume of maybe 5% and increase until it shows GOOD most of
+the time. If it doesn't your voltage levels may be of and some more code is needed to properly do things. You might want
+to try reading out anyways, who knows, it might work.
