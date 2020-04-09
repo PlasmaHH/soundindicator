@@ -1,6 +1,6 @@
 
 #include "soundcard_indicator.h"
-
+#include "format.h"
 #include "banner.h"
 
 
@@ -239,7 +239,7 @@ public:
 
 		double expected_steps = position_mm * steps_per_mm[axis];
 
-		std::string exstr = axis + ":" + std::to_string(expected_steps);
+		std::string exstr = axis + ":" + std::to_string(int(expected_steps));
 		size_t repeats = 0;
 		std::string lastline;
 
@@ -254,11 +254,20 @@ public:
 			sp.write("M114");
 
 			position_line = sp.readline_wait();
+			if( position_line.find("busy") != std::string::npos )
+			{
+				std::cout << "." << std::flush;
+				continue;
+			}
 //			std::cout << "\rposition_line = " << position_line << "     " << std::flush;
 			target_line = sp.readline_wait();
 //			std::cout << "target_line = " << target_line << "\n";
-			auto okline = sp.readline_wait();
-//			std::cout << "okline = " << okline << "\n";
+			if( target_line != "ok" )
+			{
+//				std::cout << "You do not seem to have realtime M114 enabled, we have no way to wait for a command to finish then\n";
+				auto okline = sp.readline_wait();
+//				std::cout << "okline = " << okline << "\n";
+			}
 			
 			
 			
@@ -272,7 +281,7 @@ public:
 				repeats = 0;
 			}
 			lastline = position_line;
-		}while( position_line.find(target_line) == std::string::npos || repeats > 2 );
+		}while( position_line.find(target_line) == std::string::npos && repeats < 2 );
 //		std::cout << "\n";
 //		std::cout << "repeats = " << repeats << "\n";
 	}
@@ -300,9 +309,9 @@ struct result
 	std::vector<double> measured_values;
 };
 
-void output_axis( const std::string& axis, size_t runs, const std::vector<result>& readings )
+void output_axis( const std::string& axis, const std::string& label, size_t runs, const std::vector<result>& readings )
 {
-	std::ofstream aout { "axis_" + axis + ".dat" };
+	std::ofstream aout { "axis_" + axis + label + ".dat" };
 
 	aout << "# g_value avg ";
 	for (size_t i = 0; i < runs; ++i)
@@ -331,7 +340,7 @@ void output_axis( const std::string& axis, size_t runs, const std::vector<result
 
 }
 
-int plot_axis( const std::string& device, bool swap_cd, const std::string& gcode, const std::string& axis, double start, double end, double steps, bool bidirectional, size_t runs, double prepos, double speed, size_t stable )
+int plot_axis( const std::string& device, const std::string& label, bool swap_cd, const std::string& gcode, const std::string& axis, double start, double end, double steps, bool bidirectional, size_t runs, double prepos, double speed, size_t stable )
 {
 	if( axis.size() != 1 )
 	{
@@ -369,11 +378,12 @@ int plot_axis( const std::string& device, bool swap_cd, const std::string& gcode
 		{
 			std::cout << "Run " << run+1 << "/" << runs << "\n";
 		}
-		std::cout << "Getting printer into start position\n";
 		if( prepos >= 0 )
 		{
+			std::cout << "Getting printer into pre-start position " << prepos << " \n";
 			pr.go_to( axis, prepos, 100 );
 		}
+		std::cout << "Getting printer into start position " << start << " \n";
 		pr.go_to(axis,start, 100 );
 		auto r = zsi.get_stable_reading();
 
@@ -404,20 +414,23 @@ int plot_axis( const std::string& device, bool swap_cd, const std::string& gcode
 			}
 //			std::cout << "ridx = " << ridx << " ";
 			
-			std::cout << "measured " << r.length;
-			std::cout << ", deviation " << (r.length.value() - zp*1000) << "µm        " << std::flush;
+			double measured = r.length.value();
+
+			std::cout << "measured " << measured << "µm";
+			measured += start*1000.0;
+			std::cout << " (" << measured << "µm corrected for zero)";
+			std::cout << ", deviation " << (measured - zp*1000) << "µm        " << std::flush;
 			readings[ridx].g_value = zp;
-			readings[ridx].measurement_sum += r.length.value();
-			readings[ridx].measured_values.push_back( r.length.value() );
+			readings[ridx].measurement_sum += measured;
+			readings[ridx].measured_values.push_back( measured );
 			++ridx;
 		}
 		std::cout << "\n";
-		output_axis( axis, run+1, readings );
+		output_axis( axis, label, run+1, readings );
 	}
 	std::cout << "\n";
 
-	output_axis( axis, runs, readings );
-
+	output_axis( axis, label, runs, readings );
 
 	return 0;
 }
@@ -447,6 +460,11 @@ int main(int argc, const char *argv[])
 	std::string device;
 	std::string gcode;
 	bool swap_cd = false;
+	std::string sweep;
+	std::string label;
+	double sweep_start = 0;
+	double sweep_end = 0;
+	double sweep_steps = 0;
 
 	boost::program_options::options_description desc("Valid options");
 
@@ -468,7 +486,12 @@ int main(int argc, const char *argv[])
 	("stable,r",boost::program_options::value<size_t>(&stable)->default_value(0), "For each reading wait to stabilize for that many readings first. Makes measurements slower, can prevent them totally if you have a too high value")
 	("device,d",boost::program_options::value<std::string>(&device)->default_value("/dev/ttyACM0"), "The serial port device the printer is attached to")
 	("gcode,g",boost::program_options::value<std::string>(&gcode), "Some gcode to execute before everyhting else" )
-	("swap_cd,d", boost::program_options::value<bool>(&swap_cd)->default_value(false),"Swap data/clock signal on the sound card")
+	("swap_cd,c", boost::program_options::value<bool>(&swap_cd)->default_value(false)->implicit_value(true),"Swap data/clock signal on the sound card")
+	("label,l", boost::program_options::value<std::string>(&label), "Extra label for the output file, will be boost::formatted just like the sweep parameter")
+	("sweep,w", boost::program_options::value<std::string>(&sweep), "Sweep gcode expression that will boost::formatted against the sweep range parameters")
+	("sweep-start,i", boost::program_options::value<double>(&sweep_start), "Start with this value for sweeping" )
+	("sweep-end,j", boost::program_options::value<double>(&sweep_end), "End with this value for sweeping ( <= in for loop)" )
+	("sweep-steps,k", boost::program_options::value<double>(&sweep_steps), "This is the amount per step for sweeping" )
 	;
 
 
@@ -491,7 +514,28 @@ int main(int argc, const char *argv[])
 
 	if( mode == "plot" )
 	{
-		return plot_axis( device, swap_cd, gcode, axis, start, end, steps, bidir, average, preposition, speed, stable );
+		if( sweep.empty() )
+		{
+			return plot_axis( device, label, swap_cd, gcode, axis, start, end, steps, bidir, average, preposition, speed, stable );
+		}
+		else
+		{
+			for( double i = sweep_start; i <= sweep_end; i += sweep_steps )
+			{
+				std::string xsweep = sci::format(sweep,sweep_start,sweep_end,sweep_steps,i);
+				if( !gcode.empty() )
+				{
+					if( xsweep[xsweep.size()-1] != '\n' )
+					{
+						xsweep += "\n";
+					}
+					xsweep += gcode;
+				}
+				std::string xlabel = sci::format(label,sweep_start,sweep_end,sweep_steps,i);
+				plot_axis( device, xlabel, swap_cd, xsweep, axis, start, end, steps, bidir, average, preposition, speed, stable );
+			}
+			return 0;
+		}
 	}
 	else if( mode == "volume" )
 	{

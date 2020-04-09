@@ -169,13 +169,13 @@ private:
 			float clock;
 			if( swap_cd )
 			{
-				data = samples[i+1];
-				clock = samples[i];
+				data = samples[i];
+				clock = samples[i+1];
 			}
 			else
 			{
-				data = samples[i];
-				clock = samples[i+1];
+				data = samples[i+1];
+				clock = samples[i];
 			}
 
 			data_state = calc_state( data_state, last_data, data );
