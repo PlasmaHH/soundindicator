@@ -9,6 +9,7 @@ Pull requests are welcome, feature requests and bug reports will only be worked 
 
 ---
 
+Inspirations were drawn from https://github.com/MGX3D/EspDRO (links to a connector for chinese dial indicators and calipers) and https://hackaday.io/project/511-digital-dial-indicator-cnc-surface-probe/log/814-the-digital-dial-indicator-and-how-to-read-from-it
 
 With it (and gnuplot) you can easily create a graph like this, which shows the error of an ender 3 pro Z axis movement:
 
